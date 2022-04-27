@@ -6,37 +6,22 @@ import tqdm
 from scipy import sparse as sp
 from sklearn.cluster import KMeans
 
-def get_comm_feature(nodes: List[int], neighbors: Dict[int, Set[int]],
-                     labels: np.ndarray, n_labels: int) -> np.ndarray:
+def get_comm_feature(nodes: List[int],scores: np.ndarray) -> np.ndarray:
     """
     Compute the distribution of edge types as the community feature."
     """
     # 4类组成的矩阵，社区内节点对的类别数量分布情况
-    count_mat = np.zeros([n_labels, n_labels])
-    nodes = set(nodes)
-    for u in nodes:
-        for v in (neighbors[u] & nodes):
-            if v > u:
-                continue
-            i, j = labels[u], labels[v]
-            i, j = (i, j) if i < j else (j, i)
-            count_mat[i, j] += 1
-    # triu_indices_from返回上三角矩阵的index(row, col), 将index返回矩阵，矩阵返回对应index的值，返回的是array
-    arr = count_mat[np.triu_indices_from(count_mat)]
-    n = arr.sum()
-    # 返回数组的副本，其中第k个对角线上方的元素为零。对角线上方为零元素。 k = 0（默认值）是主对角线，k<0在其下方，k>0在其上方。
-    assert np.tril(count_mat, k=-1).sum() == 0
-    arr /= n + 1e-9
+    nodes=set(nodes)
+    arr=np.sum(scores[u] for u in nodes)
     return arr
 
 
-def get_patterns(comms: List[List[int]], neighbors: Dict[int, Set[int]],
+def get_patterns(comms: List[List[int]],
                  node_labels: np.ndarray, n_patterns: int) -> (np.ndarray, List[List[int]], np.ndarray):
     """
     Compute community features and use k-means to get patterns' features, size distributions, and supports.
     """
-    n_labels = node_labels.max() + 1
-    comm_features = [get_comm_feature(nodes, neighbors, node_labels, n_labels) for nodes in comms]
+    comm_features = [get_comm_feature(nodes, node_labels) for nodes in comms]
     k_means = KMeans(n_patterns)
     comm_labels = k_means.fit_predict(comm_features)
     pattern_features = k_means.cluster_centers_
@@ -51,27 +36,16 @@ def get_patterns(comms: List[List[int]], neighbors: Dict[int, Set[int]],
 def compute_node_pattern_score(pattern_features: np.ndarray,
                                adj_mat: sp.spmatrix,
                                neighbors: Dict[int, Set[int]],
-                               node_labels: np.ndarray) -> np.ndarray:
+                               scores:np.ndarray) -> np.ndarray:
     """
     Scoring nodes based on local structures.
     """
 
-    
-    n_labels = node_labels.max() + 1
+
     n_nodes = adj_mat.shape[0]
-    count_mat = np.zeros([n_labels, n_labels])
-    # Local structure
-    # // 取整除 - 返回商的整数部分（向下取整）
-    node_local_features = np.zeros((n_nodes, n_labels * (n_labels + 1) // 2))
+    node_local_features = np.zeros((n_nodes, 16))
     for u in tqdm.tqdm(range(n_nodes), desc='NodeLocalFeature'):
-        count_mat.fill(0)
-        for v in neighbors[u]:
-            i, j = node_labels[u], node_labels[v]
-            i, j = (i, j) if i < j else (j, i)
-            count_mat[i, j] += 1
-        arr = count_mat[np.triu_indices_from(count_mat)]
-        arr /= arr.sum()
-        node_local_features[u] = arr
+        node_local_features[u] = np.sum(scores[v] for v in neighbors[u])
     # First Order: Pass 1 in the paper
     # @ 矩阵-向量乘法
     node_first_order_scores = node_local_features @ pattern_features.T

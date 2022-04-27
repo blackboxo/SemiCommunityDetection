@@ -154,7 +154,7 @@ def run(proc_id, n_gpus, args, devices, data):
                 avg += toc - tic
             if (epoch + 1) % args.eval_every == 0:
                 labels = evaluate(model, g, nfeat, device, args)
-                return labels
+                return labels.numpy()
 
 
 def main(args):
@@ -193,17 +193,7 @@ def main(args):
     # Pack data
     data = train_nid, val_nid, test_nid, n_classes, g, nfeat, labels
 
-    scores=run(0, 0, args, ['cpu'], data)
-    n_feats = 5
-    features = np.zeros([n_nodes, n_feats])
-    ps = np.linspace(0, 100, n_feats)
-    for u in tqdm.tqdm(range(n_nodes), desc='ExtractPercentiles'):
-        # 生成百分位的数字，ps 是 [0,25,50,75,100]，用这几个表示为节点的特征，聚成四类作为 label
-        np.percentile(scores[u], ps, out=features[u])
-    # Kmeans
-    kmeans = KMeans(4)
-    labels = kmeans.fit_predict(features)
-
+    scores = run(0, 0, args, ['cpu'], data)
     adj_mat, comms, *_ = load_snap_dataset(args.dataset, args.root)
     # Split comms
     train_comms, test_comms = split_comms(comms, args.train_size, args.seed, args.max_size)
@@ -212,8 +202,8 @@ def main(args):
           flush=True)
     # Fit
     model = Bespoke(args.n_roles, args.n_patterns, args.eps, unique=True)
-    pattern_features=model.fit(adj_mat, train_comms,labels)
-    pred_comms = model.sample_batch(args.pred_size,labels, pattern_features)
+    pattern_features=model.fit(adj_mat, train_comms,scores)
+    pred_comms = model.sample_batch(args.pred_size,pattern_features,scores)
     # Evaluating
     print(f'-> (All)  # Comms: {len(pred_comms)}')
     evaluate2(pred_comms, test_comms)
@@ -260,7 +250,7 @@ if __name__ == '__main__':
     argparser.add_argument('--n_roles', type=int, help='the number of node labels', default=4)
     argparser.add_argument('--n_patterns', type=int, help='the number of community patterns', default=5)
     argparser.add_argument('--eps', type=int, help='maximum tolerance for seed selection', default=5)
-    argparser.add_argument('--pred_size', type=int, help='the number of communities to extract', default=50000)
+    argparser.add_argument('--pred_size', type=int, help='the number of communities to extract', default=5000)
     argparser.add_argument('--save_dst', type=str, help='where to save the searched communities',
                         default='bespoke_comms.txt')
     args = argparser.parse_args()
