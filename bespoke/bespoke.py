@@ -1,6 +1,6 @@
 from .core import *
 import numpy
-
+import tqdm
 
 class Bespoke:
 
@@ -27,8 +27,7 @@ class Bespoke:
         pattern_features, self.pattern_sizes, pattern_support = get_patterns(
             train_comms, scores, self.n_patterns)
         self.pattern_p = pattern_support / pattern_support.sum()
-        self.node_pattern_scores = compute_node_pattern_score(pattern_features, self.adj_mat, self.node_neighbors,
-                                                              scores)
+        self.node_pattern_scores = compute_node_pattern_score(pattern_features, self.adj_mat, self.node_neighbors, scores)
         self.reset_seeds()
         return pattern_features
 
@@ -44,7 +43,7 @@ class Bespoke:
                                       for d, nodes in degree_node_dict.items()}
                                      for x in self.node_pattern_scores.T]
 
-    def sample(self, pattern_features,scores):
+    def sample(self, pattern_features, scores):
         n_try = 0
         while (n_try < 20) and (len(self.used_seeds) < self.n_nodes):
             n_try += 1
@@ -54,64 +53,40 @@ class Bespoke:
                             self.used_seeds if self.unique else set())
             if seed is None:
                 continue
-            a = numpy.zeros((200, 100000), dtype=numpy.int)   #存储一百多个二叉树的路径，最后选最佳路径
-            b = numpy.zeros((200, 100000), dtype=numpy.int)
-            n = numpy.zeros((200, 317080), dtype=numpy.int)
-            m = numpy.zeros(200)
-            d = numpy.zeros(200)
-            a[:, 0] = seed
-            l = 0
-            for i in self.node_neighbors[seed]:   #先把种子的所有一阶邻居选上
-                l=l+1
-                a[:, l] = i
-                n[:, i] = 1   #已选节点标签为1
-            for i in range(1,l):
-                for j in self.node_neighbors[a[0,i]]:
-                    if n[0, j] == 0:
-                        b[:, int(m[0])] = j   #b为已选节点的邻居节点的集合
-                        m[0] = m[0] + 1   #b中含有节点数
-                        n[:, j] = 2   #已选节点的邻居节点标签为2
-            i = 0
-            p = 22 - l
-            for l in range(23-p,23):   #每个团伙22个节点
-                i=i+1
-                for j in range(1, 2 ^ p):
-                    if j - 2 ^ i > 0:   #比如第一轮只有2个选择，所有奇数路径的选择都是一样的，第二轮只有4个选择，1、5、9、……选择是一样的
-                        m[j] = m[j - 2 ^ i]
-                        n[j, :] = n[j - 2 ^ i, :]
-                        continue
-                    if j - 2 ^ (i - 1) > 0: continue   #比如第一轮1和3的选择一样，第二轮1和3的选择是一块排序选前二的，3的选择在1的选择的时候就选过了，这里就不用再选了
-                    f1 = 10000   #f1表示和模式向量的距离最小值
-                    f2 = 10000   #f2表示和模式向量的距离第二小值
-                    g1 = 0   #g1表示f1对应的节点
-                    g2 = 0   #g2表示f2对应的节点
-                    for k in range(int(m[j])):
-                        if n[j, b[j,k]] != 2: continue
-                        a[j, l] = b[j,k]
-                        e = get_comm_feature(list(set(a[j].tolist())), scores)
-                        if numpy.sqrt(numpy.sum(numpy.square(e - pattern_features[pattern_id]))) < f2:
-                            f2 = numpy.sqrt(numpy.sum(numpy.square(e - pattern_features[pattern_id])))
-                            g2 = b[j,k]
-                            if f1 > f2:
-                                f1, f2 = f2, f1
-                                g1, g2 = g2, g1
-                    a[j, l] = g1
-                    a[j + 2 ^ (i - 1), l] = g2
-                    n[j, g1] = 1
-                    n[j + 2 ^ (i - 1), g2] = 1
-                    for k in self.node_neighbors[g1]:
-                        if n[j, k] == 0:
-                            b[j, int(m[j])] = k
-                            m[j] = m[j] + 1
-                            n[j, k] = 2
-                    for k in self.node_neighbors[g2]:
-                        if n[j + 2 ^ (i - 1), k] == 0:
-                            b[j + 2 ^ (i - 1), int(m[j + 2 ^ (i - 1)])] = k
-                            m[j + 2 ^ (i - 1)] = m[j + 2 ^ (i - 1)] + 1
-                            n[j + 2 ^ (i - 1), k] = 2
-                    if l == 22:   d[j] = f1
-            o = numpy.argmin(d)
-            return list(set(a[o].tolist()))
+            
+            # return [seed] + list(self.node_neighbors[seed])
+            
+            community_nodes = set([seed] + list(self.node_neighbors[seed]))
+            community_features = np.sum((scores[v] for v in community_nodes), dtype=np.float64)
+            community_scores = community_features @ pattern_features[pattern_id].T
+
+            # start from one-hop neighbor
+            sequences = [[community_nodes, community_features, community_scores]]
+            all_sequences = [[community_nodes, community_features, community_scores]]
+            max_community_size = 10
+            k = 6
+            for _ in range(0, 5):
+                all_candidates = list()
+
+                for i in range(len(sequences)):
+                    seq, feature, score = sequences[i]
+                    new_neighbor_nodes = list()
+
+                    for u in seq:
+                        new_neighbor_nodes += list(self.node_neighbors[u]) 
+
+                    new_neighbor_nodes = set(new_neighbor_nodes) - set(seq)
+    
+                    for j in new_neighbor_nodes:
+                        new_feature = feature + scores[j]
+                        candidate = [seq | set([j]), new_feature, new_feature @ pattern_features[pattern_id].T ]
+                        all_candidates.append(candidate)
+                ordered = sorted(all_candidates, key=lambda tup: tup[2], reverse=True)  # 按score排序
+                sequences = ordered[:k]  # 选择前k个最好的
+                all_sequences += sequences
+
+            ordered_all_sequences = sorted(all_sequences, key=lambda tup: tup[2], reverse=True)  # 按score排序
+            return list(ordered_all_sequences[0][0])
         else:
             raise ValueError('(Almost) Run out of seeds!')
 
@@ -120,9 +95,9 @@ class Bespoke:
             self.reset_seeds()
         pred_comms = []
         try:
-            for i in range(n):
+            for i in tqdm.tqdm(range(n), desc='PredComms'):
+            # for i in range(n):
                 pred_comms.append(self.sample(pattern_features,scores))
-                print(i)
         except ValueError as e:
             print('Warning!!!', e)
         return pred_comms

@@ -43,9 +43,10 @@ def compute_node_pattern_score(pattern_features: np.ndarray,
 
 
     n_nodes = adj_mat.shape[0]
-    node_local_features = np.zeros((n_nodes, 16))
+    # score of center node
+    node_local_features = np.array(scores, dtype=np.float64)
     for u in tqdm.tqdm(range(n_nodes), desc='NodeLocalFeature'):
-        node_local_features[u] = np.sum(scores[v] for v in neighbors[u])
+        node_local_features[u] += np.sum(scores[v] for v in neighbors[u])
     # First Order: Pass 1 in the paper
     # @ 矩阵-向量乘法
     node_first_order_scores = node_local_features @ pattern_features.T
