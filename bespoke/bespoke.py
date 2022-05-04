@@ -1,6 +1,8 @@
 from .core import *
 import numpy
 import tqdm
+from sklearn.metrics.pairwise import euclidean_distances
+
 
 class Bespoke:
 
@@ -39,8 +41,7 @@ class Bespoke:
         for i, d in enumerate(node_degrees):
             degree_node_dict[d].append(i)
 
-        self.pattern_degree_seeds = [{d: sorted(nodes, key=lambda i: -x[i])
-                                      for d, nodes in degree_node_dict.items()}
+        self.pattern_degree_seeds = [sorted(range(self.n_nodes), key=lambda i: -x[i])
                                      for x in self.node_pattern_scores.T]
 
     def sample(self, pattern_features, scores):
@@ -48,24 +49,28 @@ class Bespoke:
         while (n_try < 20) and (len(self.used_seeds) < self.n_nodes):
             n_try += 1
             pattern_id = numpy.random.choice(len(self.pattern_p), p=self.pattern_p)
-            target_size = numpy.random.choice(self.pattern_sizes[pattern_id])
+            # target_size = numpy.random.choice(self.pattern_sizes[pattern_id])
+            # if target_size > 30:
+            target_size = 10
             seed = get_seed(target_size, self.pattern_degree_seeds[pattern_id],
                             self.used_seeds if self.unique else set())
             if seed is None:
                 continue
             
-            # return [seed] + list(self.node_neighbors[seed])
+            # print("origin:", [seed] + list(self.node_neighbors[seed]))
             
             community_nodes = set([seed] + list(self.node_neighbors[seed]))
             community_features = np.sum((scores[v] for v in community_nodes), dtype=np.float64)
-            community_scores = community_features @ pattern_features[pattern_id].T
+            #community_scores = community_features @ pattern_features[pattern_id].T
+            diff = community_features - pattern_features[pattern_id].T
+            community_scores = diff @ diff.T
 
             # start from one-hop neighbor
             sequences = [[community_nodes, community_features, community_scores]]
             all_sequences = [[community_nodes, community_features, community_scores]]
-            max_community_size = 10
-            k = 6
-            for _ in range(0, 5):
+
+            k = 3
+            for _ in range(0, target_size - len(community_nodes)):
                 all_candidates = list()
 
                 for i in range(len(sequences)):
@@ -79,13 +84,17 @@ class Bespoke:
     
                     for j in new_neighbor_nodes:
                         new_feature = feature + scores[j]
-                        candidate = [seq | set([j]), new_feature, new_feature @ pattern_features[pattern_id].T ]
+                        diff = new_feature - pattern_features[pattern_id].T
+                        dist = diff @ diff.T
+                        candidate = [seq | set([j]), new_feature, dist]
                         all_candidates.append(candidate)
-                ordered = sorted(all_candidates, key=lambda tup: tup[2], reverse=True)  # 按score排序
+                ordered = sorted(all_candidates, key=lambda tup: tup[2], reverse=False)  # 按score排序
                 sequences = ordered[:k]  # 选择前k个最好的
                 all_sequences += sequences
 
-            ordered_all_sequences = sorted(all_sequences, key=lambda tup: tup[2], reverse=True)  # 按score排序
+            ordered_all_sequences = sorted(all_sequences, key=lambda tup: tup[2], reverse=False)  # 按score排序
+
+            # print("search:", list(ordered_all_sequences[0][0]))
             return list(ordered_all_sequences[0][0])
         else:
             raise ValueError('(Almost) Run out of seeds!')

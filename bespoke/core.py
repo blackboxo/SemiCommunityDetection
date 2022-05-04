@@ -5,6 +5,7 @@ import numpy as np
 import tqdm
 from scipy import sparse as sp
 from sklearn.cluster import KMeans
+from sklearn.metrics.pairwise import euclidean_distances
 
 def get_comm_feature(nodes: List[int],scores: np.ndarray) -> np.ndarray:
     """
@@ -49,7 +50,8 @@ def compute_node_pattern_score(pattern_features: np.ndarray,
         node_local_features[u] += np.sum(scores[v] for v in neighbors[u])
     # First Order: Pass 1 in the paper
     # @ 矩阵-向量乘法
-    node_first_order_scores = node_local_features @ pattern_features.T
+    # node_first_order_scores = node_local_features @ pattern_features.T
+    node_first_order_scores = euclidean_distances(node_local_features, pattern_features)
     # Second Order: Pass 2 in the paper
     deg_vec = np.array(adj_mat.sum(1)).squeeze()
     # diags 提取对角线或构造对角线数组。
@@ -59,19 +61,28 @@ def compute_node_pattern_score(pattern_features: np.ndarray,
     return node_pattern_scores
 
 
-def get_seed(target_size: int, degree_seeds: Dict[int, List[int]],
+def get_seed(target_size: int, degree_seeds: List[int],
              used_seeds: Set[int], eps: int = 5) -> Union[int, None]:
     """
     Find the best seed that has never be picked before.
     """
-    for deg in range(target_size - 1, target_size + eps):
-        sorted_seeds = degree_seeds.get(deg, [])
-        if len(sorted_seeds) == 0:
-            continue
-        while len(sorted_seeds):
-            seed = sorted_seeds.pop()
-            if seed not in used_seeds:
-                used_seeds.add(seed)
-                return seed
+    
+    while len(degree_seeds):
+        seed = degree_seeds.pop()
+        if seed not in used_seeds:
+            used_seeds.add(seed)
+            return seed
     else:
         return None
+    
+    # for deg in range(target_size - 1, target_size + eps):
+    #     sorted_seeds = degree_seeds.get(deg, [])
+    #     if len(sorted_seeds) == 0:
+    #         continue
+    #     while len(sorted_seeds):
+    #         seed = sorted_seeds.pop()
+    #         if seed not in used_seeds:
+    #             used_seeds.add(seed)
+    #             return seed
+    # else:
+    #     return None
