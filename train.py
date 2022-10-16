@@ -20,6 +20,7 @@ from utils import *
 
 import tqdm
 from sklearn.cluster import KMeans
+from sklearn.model_selection import train_test_split
 
 def evaluate2(pred_comms, test_comms):
     scores_1, scores_2 = eval_comms_bidirectional(pred_comms, test_comms)
@@ -108,7 +109,7 @@ def run(proc_id, n_gpus, args, devices, data):
 
     load_model = True
     if load_model:
-        model.load_state_dict(th.load('model.pt'))
+        model.load_state_dict(th.load(args.dataset + '_model.pt'))
         return model
 
     # Training loop
@@ -161,7 +162,7 @@ def run(proc_id, n_gpus, args, devices, data):
                 labels = evaluate(model, g, nfeat, device, args)
                 # return labels.numpy()
     
-    th.save(model.state_dict(), 'model.pt')
+    th.save(model.state_dict(), args.dataset + '_model.pt')
 
     return model
 
@@ -170,27 +171,40 @@ def main(args):
     devices = list(map(int, args.gpu.split(',')))
     n_gpus = len(devices)
 
-    edges = open('com-dblp.ungraph.txt').readlines()
-    edges = [[int(i) for i in e.split()] for e in edges[4:]]
-    edges = [[u, v] if u < v else [v, u] for u, v in edges if u != v]
-    nodes = {i for x in edges for i in x}
-    mapping = {u: i for i, u in enumerate(sorted(nodes))}
-    edges = np.asarray([[mapping[u], mapping[v]] for u, v in edges])
-    edges = [u for u,v in edges],[v for u,v in edges]
-    g = dgl.graph(edges)
-    n_nodes = np.max(edges) + 1
-    n_classes = 5
-    g.ndata['labels'] = th.ones((n_nodes, 120))
-    g.ndata['features'] = th.ones((n_nodes, 50))
-    g.ndata['train_mask'] = th.cat((th.ones(int(n_nodes / 20)), th.zeros(n_nodes - int(n_nodes / 20))), 0)
-    g.ndata['val_mask'] = th.cat(
-        (th.zeros(int(n_nodes / 20)), th.ones(int(n_nodes / 20)), th.zeros(n_nodes - 2 * int(n_nodes / 20))), 0)
-    train_nid = int(n_nodes / 20)
-    val_nid = int(n_nodes / 20)
-    test_nid = 2 * int(n_nodes / 20)
+    # edges = open('com-dblp.ungraph.txt').readlines()
+    # edges = [[int(i) for i in e.split()] for e in edges[4:]]
+    # edges = [[u, v] if u < v else [v, u] for u, v in edges if u != v]
+    # nodes = {i for x in edges for i in x}
+    # mapping = {u: i for i, u in enumerate(sorted(nodes))}
+    # edges = np.asarray([[mapping[u], mapping[v]] for u, v in edges])
+    # edges = [u for u,v in edges],[v for u,v in edges]
+    # g = dgl.graph(edges)
+    # g = dgl.to_bidirected(g) # for undirected
+    # n_nodes = np.max(edges) + 1
+    # n_classes = 2
+    # # g.ndata['labels'] = th.ones((n_nodes, 120))
 
-    nfeat = g.ndata.pop('features')
-    labels = g.ndata.pop('labels')
+    # nfeat= th.ones(n_nodes, 128)
+    # # nfeat = dgl.laplacian_pe(g, 16)
+    # labels = th.randint(0, n_classes, (n_nodes,))
+    # g.ndata['train_mask'] = th.cat((th.ones(int(n_nodes / 20)), th.zeros(n_nodes - int(n_nodes / 20))), 0)
+    # g.ndata['val_mask'] = th.cat(
+    #     (th.zeros(int(n_nodes / 20)), th.ones(int(n_nodes / 20)), th.zeros(n_nodes - 2 * int(n_nodes / 20))), 0)
+    # train_nid = int(n_nodes / 20)
+    # val_nid = int(n_nodes / 20)
+    # test_nid = 2 * int(n_nodes / 20)
+    # train_nid, test_nid = train_test_split(np.arange(n_nodes), test_size=0.3, random_state=42)
+    # train_nid, val_nid = train_test_split(train_nid, test_size=0.5, random_state=42)
+
+    # train_nid = th.Tensor(train_nid).int()
+    # test_nid = th.Tensor(test_nid).int()
+    # val_nid = th.Tensor(val_nid).int()
+
+    # nfeat = g.ndata.pop('features')
+    # labels = g.ndata.pop('labels')
+
+    adj_mat, comms, mapping, g, nfeat, labels, train_nid, test_nid, val_nid, n_classes = load_snap_dataset(args.dataset, args.root)
+
     # Create csr/coo/csc formats before launching training processes with multi-gpu.
     # This avoids creating certain formats in each sub-process, which saves memory and CPU.
     g.create_formats_()
@@ -202,13 +216,9 @@ def main(args):
     # Pack data
     data = train_nid, val_nid, test_nid, n_classes, g, nfeat, labels
 
-
-
     model = run(0, 0, args, ['cpu'], data)
 
-
     scores = evaluate(model, g, nfeat, th.device('cpu'), args).numpy()
-    adj_mat, comms, *_ = load_snap_dataset(args.dataset, args.root)
     # Split comms
     train_comms, test_comms = split_comms(comms, args.train_size, args.seed, args.max_size)
     print(f'[{args.dataset}] # Nodes: {adj_mat.shape[0]}'
@@ -221,6 +231,7 @@ def main(args):
     # Evaluating
     print(f'-> (All)  # Comms: {len(pred_comms)}')
     evaluate2(pred_comms, test_comms)
+    write_comms_to_file(test_comms, "test_comms.txt")
     # Save
     if len(args.save_dst) > 0:
         write_comms_to_file(pred_comms, args.save_dst)
@@ -230,14 +241,14 @@ if __name__ == '__main__':
     argparser.add_argument("--gpu", type=str, default='-1',
                            help="GPU, can be a list of gpus for multi-gpu training,"
                                 " e.g., 0,1,2,3; -1 for CPU")
-    argparser.add_argument('--num-epochs', type=int, default=20)
+    argparser.add_argument('--num-epochs', type=int, default=30)
     argparser.add_argument('--num-hidden', type=int, default=16)
     argparser.add_argument('--num-layers', type=int, default=2)
     argparser.add_argument('--num-negs', type=int, default=1)
     argparser.add_argument('--neg-share', default=False, action='store_true',
                            help="sharing neg nodes for positive nodes")
     argparser.add_argument('--fan-out', type=str, default='10,25')
-    argparser.add_argument('--batch-size', type=int, default=10000)
+    argparser.add_argument('--batch-size', type=int, default=5000)
     argparser.add_argument('--log-every', type=int, default=20)
     argparser.add_argument('--eval-every', type=int, default=5)
     argparser.add_argument('--lr', type=float, default=0.003)
@@ -264,7 +275,7 @@ if __name__ == '__main__':
     argparser.add_argument('--n_roles', type=int, help='the number of node labels', default=4)
     argparser.add_argument('--n_patterns', type=int, help='the number of community patterns', default=5)
     argparser.add_argument('--eps', type=int, help='maximum tolerance for seed selection', default=5)
-    argparser.add_argument('--pred_size', type=int, help='the number of communities to extract', default=50000)
+    argparser.add_argument('--pred_size', type=int, help='the number of communities to extract', default=5000)
     argparser.add_argument('--save_dst', type=str, help='where to save the searched communities',
                         default='bespoke_comms.txt')
     args = argparser.parse_args()

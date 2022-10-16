@@ -19,6 +19,8 @@ class Bespoke:
         self.used_seeds = None
         self.node_pattern_scores = None
         self.pattern_degree_seeds = None
+        self.pattern_features = None
+        self.scores = None
 
     def fit(self, adj_mat, train_comms, scores):
         self.adj_mat = adj_mat
@@ -28,6 +30,8 @@ class Bespoke:
         # Extract Patterns
         pattern_features, self.pattern_sizes, pattern_support = get_patterns(
             train_comms, scores, self.n_patterns)
+        self.pattern_features = pattern_features
+        self.scores = scores
         self.pattern_p = pattern_support / pattern_support.sum()
         self.node_pattern_scores = compute_node_pattern_score(pattern_features, self.adj_mat, self.node_neighbors, scores)
         self.reset_seeds()
@@ -41,59 +45,72 @@ class Bespoke:
         for i, d in enumerate(node_degrees):
             degree_node_dict[d].append(i)
 
-        self.pattern_degree_seeds = [sorted(range(self.n_nodes), key=lambda i: -x[i])
+        self.pattern_degree_seeds = [{d: sorted(nodes, key=lambda i: -x[i])
+                                      for d, nodes in degree_node_dict.items()}
                                      for x in self.node_pattern_scores.T]
+        # self.pattern_degree_seeds = [sorted(range(self.n_nodes), key=lambda i: -x[i])
+        #                              for x in self.node_pattern_scores.T]
 
-    def sample(self, pattern_features, scores):
+    def sample(self):
         n_try = 0
         while (n_try < 20) and (len(self.used_seeds) < self.n_nodes):
             n_try += 1
-            pattern_id = numpy.random.choice(len(self.pattern_p), p=self.pattern_p)
-            # target_size = numpy.random.choice(self.pattern_sizes[pattern_id])
-            # if target_size > 30:
-            target_size = 10
+            pattern_id = np.random.choice(len(self.pattern_p), p=self.pattern_p)
+            target_size = np.random.choice(self.pattern_sizes[pattern_id])
             seed = get_seed(target_size, self.pattern_degree_seeds[pattern_id],
                             self.used_seeds if self.unique else set())
             if seed is None:
                 continue
-            
-            # print("origin:", [seed] + list(self.node_neighbors[seed]))
+            return [seed] + list(self.node_neighbors[seed]), pattern_id, target_size
+        else:
+            raise ValueError('(Almost) Run out of seeds!')
+
+    def beam_sample(self, k = 10):
+        emb = self.scores
+        pattern_features = self.pattern_features
+        n_try = 0
+        while (n_try < 20):
+            n_try += 1
+            pattern_id = numpy.random.choice(len(self.pattern_p), p=self.pattern_p)
+            target_size = np.random.choice(self.pattern_sizes[pattern_id])
+            seed = get_seed(target_size, self.pattern_degree_seeds[pattern_id], self.used_seeds)
+            if seed is None:
+                continue
             
             community_nodes = set([seed] + list(self.node_neighbors[seed]))
-            community_features = np.sum((scores[v] for v in community_nodes), dtype=np.float64)
-            #community_scores = community_features @ pattern_features[pattern_id].T
-            diff = community_features - pattern_features[pattern_id].T
-            community_scores = diff @ diff.T
+            community_features = np.sum((emb[v] for v in community_nodes), axis=0, dtype=np.float64)
+            community_features_sum = np.sum((emb[v] for v in community_nodes), axis=0, dtype=np.float64)
+            community_scores = euclidean_distances(community_features.reshape(1,-1), pattern_features[pattern_id].reshape(1,-1))[0][0]
 
             # start from one-hop neighbor
-            sequences = [[community_nodes, community_features, community_scores]]
-            all_sequences = [[community_nodes, community_features, community_scores]]
-
-            k = 3
-            for _ in range(0, target_size - len(community_nodes)):
+            sequences = [[community_nodes, community_features, community_features_sum, community_scores]]
+            all_sequences = [[community_nodes, community_features, community_features_sum, community_scores]]
+            # print(sequences)
+            for _ in range(target_size + 3 - len(community_nodes)):
                 all_candidates = list()
 
                 for i in range(len(sequences)):
-                    seq, feature, score = sequences[i]
+                    seq, feature, feature_sum, score = sequences[i]
                     new_neighbor_nodes = list()
 
                     for u in seq:
                         new_neighbor_nodes += list(self.node_neighbors[u]) 
 
                     new_neighbor_nodes = set(new_neighbor_nodes) - set(seq)
-    
+                    if len(new_neighbor_nodes) > 100:
+                        new_neighbor_nodes = np.random.choice(list(new_neighbor_nodes), size=100, replace=False)
                     for j in new_neighbor_nodes:
-                        new_feature = feature + scores[j]
-                        diff = new_feature - pattern_features[pattern_id].T
-                        dist = diff @ diff.T
-                        candidate = [seq | set([j]), new_feature, dist]
+                        new_feature_sum = feature_sum + emb[j]
+                        new_feature = new_feature_sum # / (len(seq) + 1)
+                        new_score = euclidean_distances(new_feature.reshape(1,-1),pattern_features[pattern_id].reshape(1,-1))[0][0]
+                        candidate = [seq | set([j]), new_feature, new_feature_sum, new_score]
                         all_candidates.append(candidate)
-                ordered = sorted(all_candidates, key=lambda tup: tup[2], reverse=False)  # 按score排序
+                ordered = sorted(all_candidates, key=lambda tup: tup[-1])  # 按score排序
                 sequences = ordered[:k]  # 选择前k个最好的
                 all_sequences += sequences
 
-            ordered_all_sequences = sorted(all_sequences, key=lambda tup: tup[2], reverse=False)  # 按score排序
-
+            ordered_all_sequences = sorted(all_sequences, key=lambda tup: tup[-1])  # 按score排序
+            # print(ordered_all_sequences)
             # print("search:", list(ordered_all_sequences[0][0]))
             return list(ordered_all_sequences[0][0])
         else:
@@ -105,8 +122,8 @@ class Bespoke:
         pred_comms = []
         try:
             for i in tqdm.tqdm(range(n), desc='PredComms'):
-            # for i in range(n):
-                pred_comms.append(self.sample(pattern_features,scores))
+                pred_comms.append(self.sample()[0])
+                #pred_comms.append(self.beam_sample())
         except ValueError as e:
             print('Warning!!!', e)
         return pred_comms

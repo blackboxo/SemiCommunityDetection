@@ -20,6 +20,8 @@ def split_comms(comms, n_train, seed, max_size=0):
 def print_results(score, prefix='Metric'):
     p, r, f, j = score
     print(f'{prefix}: Precision:{p:.2f} Recall:{r:.2f} F1:{f:.2f} Jaccard:{j:.2f}', flush=True)
+    with open('result.txt', 'a') as fh:
+        fh.write(prefix + ": Precision: " + str(p) + ", Recall: " + str(r) + ", F1: " +  str(f) + ", Jaccard: " + str(j) + '\n')
 
 
 def write_comms_to_file(comms, fname):

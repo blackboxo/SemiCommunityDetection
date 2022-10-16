@@ -13,7 +13,7 @@ def get_comm_feature(nodes: List[int],scores: np.ndarray) -> np.ndarray:
     """
     # 4类组成的矩阵，社区内节点对的类别数量分布情况
     nodes=set(nodes)
-    arr=np.sum(scores[u] for u in nodes)
+    arr=np.sum([scores[u] for u in nodes], axis=0)
     return arr
 
 
@@ -47,10 +47,10 @@ def compute_node_pattern_score(pattern_features: np.ndarray,
     # score of center node
     node_local_features = np.array(scores, dtype=np.float64)
     for u in tqdm.tqdm(range(n_nodes), desc='NodeLocalFeature'):
-        node_local_features[u] += np.sum(scores[v] for v in neighbors[u])
+        neighbor = set(list(neighbors[u]) + [u])
+        node_local_features[u] += np.sum([scores[v] for v in neighbor], axis = 0)
     # First Order: Pass 1 in the paper
     # @ 矩阵-向量乘法
-    # node_first_order_scores = node_local_features @ pattern_features.T
     node_first_order_scores = euclidean_distances(node_local_features, pattern_features)
     # Second Order: Pass 2 in the paper
     deg_vec = np.array(adj_mat.sum(1)).squeeze()
@@ -58,6 +58,7 @@ def compute_node_pattern_score(pattern_features: np.ndarray,
     node_second_order_scores = sp.diags((adj_mat @ deg_vec) ** -1) @ adj_mat @ (
             deg_vec[:, None] * node_first_order_scores)
     node_pattern_scores = node_first_order_scores + node_second_order_scores
+
     return node_pattern_scores
 
 
@@ -67,22 +68,22 @@ def get_seed(target_size: int, degree_seeds: List[int],
     Find the best seed that has never be picked before.
     """
     
-    while len(degree_seeds):
-        seed = degree_seeds.pop()
-        if seed not in used_seeds:
-            used_seeds.add(seed)
-            return seed
-    else:
-        return None
-    
-    # for deg in range(target_size - 1, target_size + eps):
-    #     sorted_seeds = degree_seeds.get(deg, [])
-    #     if len(sorted_seeds) == 0:
-    #         continue
-    #     while len(sorted_seeds):
-    #         seed = sorted_seeds.pop()
-    #         if seed not in used_seeds:
-    #             used_seeds.add(seed)
-    #             return seed
+    # while len(degree_seeds):
+    #     seed = degree_seeds.pop()
+    #     if seed not in used_seeds:
+    #         used_seeds.add(seed)
+    #         return seed
     # else:
     #     return None
+    
+    for deg in range(target_size - 1, target_size + eps):
+        sorted_seeds = degree_seeds.get(deg, [])
+        if len(sorted_seeds) == 0:
+            continue
+        while len(sorted_seeds):
+            seed = sorted_seeds.pop()
+            if seed not in used_seeds:
+                used_seeds.add(seed)
+                return seed
+    else:
+        return None
