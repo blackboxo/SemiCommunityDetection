@@ -1,7 +1,7 @@
 import argparse
 import datetime
 
-from bespoke import *
+from semiCD import *
 
 from utils import *
 
@@ -25,7 +25,7 @@ def main(args):
           f' # TrainComms: {len(train_comms)} # TestComms: {len(test_comms)}',
           flush=True)
     # Fit
-    model = Bespoke(args.n_roles, args.n_patterns, args.eps, unique=True)
+    model = SemiCD(args.n_roles, args.n_patterns, args.eps, unique=True)
     model.fit(adj_mat, train_comms)
     pred_comms = model.sample_batch(args.pred_size)
     # Evaluating
@@ -50,7 +50,7 @@ if __name__ == '__main__':
     parser.add_argument('--eps', type=int, help='maximum tolerance for seed selection', default=5)
     parser.add_argument('--pred_size', type=int, help='the number of communities to extract', default=50000)
     parser.add_argument('--save_dst', type=str, help='where to save the searched communities',
-                        default='bespoke_comms.txt')
+                        default='semiCD_comms.txt')
 
     args = parser.parse_args()
     seed_all(args.seed)

@@ -14,7 +14,7 @@ from negative_sampler import NegativeSampler
 import dgl.dataloading
 
 
-from bespoke import *
+from semiCD import *
 
 from utils import *
 
@@ -225,7 +225,7 @@ def main(args):
           f' # TrainComms: {len(train_comms)} # TestComms: {len(test_comms)}',
           flush=True)
     # Fit
-    model = Bespoke(args.n_roles, args.n_patterns, args.eps, unique=True)
+    model = SemiCD(args.n_roles, args.n_patterns, args.eps, unique=True)
     pattern_features=model.fit(adj_mat, train_comms,scores)
     pred_comms = model.sample_batch(args.pred_size,pattern_features,scores)
     # Evaluating
@@ -277,7 +277,7 @@ if __name__ == '__main__':
     argparser.add_argument('--eps', type=int, help='maximum tolerance for seed selection', default=5)
     argparser.add_argument('--pred_size', type=int, help='the number of communities to extract', default=5000)
     argparser.add_argument('--save_dst', type=str, help='where to save the searched communities',
-                        default='bespoke_comms.txt')
+                        default='semiCD_comms.txt')
     args = argparser.parse_args()
     seed_all(args.seed)
 
